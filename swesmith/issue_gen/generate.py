@@ -77,11 +77,13 @@ class IssueGen:
         use_existing: bool,
         n_workers: int,
         experiment_id: Path,
+        run_id: None,
     ):
         self.experiment_id = experiment_id
         self.model = model
         self.use_existing = use_existing
         self.n_workers = n_workers
+        self.run_id = run_id
         dataset_path = Path(dataset_path)
         if not dataset_path.suffix == ".json":
             print("Warning: Expected a JSON file")
@@ -110,9 +112,17 @@ class IssueGen:
 
     def get_test_output(self, instance: dict) -> str:
         # Get execution output from running pytest for this instance (from validation step)
+        # import pdb
+        # pdb.set_trace()
+
+        run_id_to_use = (
+            instance.get("run_id") or  # From task instance (Option 2)
+            self.run_id or             # From parameter (Option 1)
+            instance["repo"].split("/")[-1]  # Fallback to old behavior
+        )
         test_output = (
             LOG_DIR_RUN_VALIDATION
-            / instance["repo"].split("/")[-1]
+            / run_id_to_use
             / instance[KEY_INSTANCE_ID]
             / LOG_TEST_OUTPUT
         ).read_text()
@@ -135,11 +145,16 @@ class IssueGen:
         repos_to_remove = []
         test_idxs = list(range(len(instance[FAIL_TO_PASS])))
         random.shuffle(test_idxs)
-        for test_idx in test_idxs:
+        # import pdb
+        # pdb.set_trace()
+        for test_idx in test_idxs[:5]:
+            # print("CALLING EXTERNAL SWE_SMITH LIBRARY: GET_TEST_FUNCTION (NOTICE NO S)")
             test_func = get_test_function(instance, test_idx)
             if test_func["cloned"]:
                 repos_to_remove.append(test_func["repo_name"])
             test_funcs.append(test_func["test_src"])
+
+        # print("FINISHED UP IN GET_TEST_FUNCTIONS")
         return test_funcs, repos_to_remove
 
     def get_demo_issues(self) -> list[str]:
@@ -151,6 +166,7 @@ class IssueGen:
             for instance in self.swebv
         ]  # type: ignore[index]
         random.shuffle(problem_statements)
+        # print("FINSIHED UP IN GET_DEMO_ISSUES")
         return problem_statements
 
     def generate_issue(self, instance: dict, idx_inst: int, f: TextIOWrapper) -> dict:
@@ -190,7 +206,8 @@ class IssueGen:
             env.filters["shuffle"] = jinja_shuffle
             template = env.from_string(prompt)
             return template.render(**candidate, **config.get("parameters", {}))
-
+        
+        # print("I AM HERE INSIDE OF GENERATE ISSUE")
         # Generate prompt
         messages = [
             {"content": self.config["system"], "role": "system"},
@@ -207,6 +224,7 @@ class IssueGen:
                 },
             )
         test_funcs, repos_to_remove = self.get_test_functions(instance_curr)
+        # print("NOW I AM HERE INSIDE OF GENERATE ISSUE")
         messages.append(
             {
                 "content": format_prompt(
@@ -251,8 +269,11 @@ class IssueGen:
 
         # Remove cloned repos
         for repo in repos_to_remove:
-            with self._lock:
-                shutil.rmtree(repo)
+            try:
+                with self._lock:
+                    shutil.rmtree(repo)
+            except Exception as e:
+                print("Error occured: ", e)
 
         return {
             "status": "completed",
@@ -338,6 +359,12 @@ if __name__ == "__main__":
         type=str,
         help="Model to use for generation.",
         default="openai/gpt-4o",
+    )
+    parser.add_argument(
+        "--run_id",
+        type=str,
+        help="Validation run ID to use for finding test outputs. If not specified, will try to use embedded run_id from task instances.",
+        default=None,  # ← Add this argument
     )
     parser.add_argument(
         "--use_existing",

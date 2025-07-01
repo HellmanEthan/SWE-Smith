@@ -227,6 +227,7 @@ def _main(
         task_instance = {
             KEY_INSTANCE_ID: subfolder,
             KEY_PATCH: open(path_patch).read(),
+            "run_id": run_id,
             FAIL_TO_PASS: results[FAIL_TO_PASS],
             PASS_TO_PASS: results[PASS_TO_PASS],
             "created_at": datetime.now().isoformat(),
@@ -295,7 +296,7 @@ def _main(
             f"cd {rp.repo_name}; git checkout -b {subfolder}",
             f"cd {rp.repo_name}; git add .",
             f"cd {rp.repo_name}; git commit --no-gpg-sign -m 'Bug Patch'",
-            f"cd {rp.repo_name}; git push origin {subfolder}",
+            # f"cd {rp.repo_name}; git push origin {subfolder}",
             f"cd {rp.repo_name}; git rev-parse HEAD",
             f"cd {rp.repo_name}; git checkout {main_branch}",
             f"cd {rp.repo_name}; git reset --hard",
@@ -324,11 +325,6 @@ def _main(
         pbar.update()
 
     pbar.close()
-    if len(created_repos) > 0:
-        print("Cleaning up...")
-        for repo in created_repos:
-            shutil.rmtree(repo)
-            print(f"Removed {repo}")
 
     task_instances_path.parent.mkdir(parents=True, exist_ok=True)
     with open(task_instances_path, "w") as f:
@@ -336,6 +332,17 @@ def _main(
     print(f"Wrote {len(task_instances)} instances to {task_instances_path}")
     print(f"- {stats['skipped']} skipped")
     print(f"- {stats['new_tasks']} new instances")
+    
+    # CLEANUP SECTION (now comes after saving + has error handling)
+    # allows us to save our results even if cleanup fails (which it originally was doing)
+    if len(created_repos) > 0:
+        print("Cleaning up...")
+        for repo in created_repos:
+            try:
+                shutil.rmtree(repo)
+                print(f"Removed {repo}")
+            except FileNotFoundError:
+                print(f"Already removed: {repo}")
 
 
 if __name__ == "__main__":
